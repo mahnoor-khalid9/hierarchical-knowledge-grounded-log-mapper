@@ -38,7 +38,7 @@ Output:
 
 ## 🏗️ Architecture
 
-![HKLM Architecture](images\architecture_diagram.png)
+![HKLM Architecture](images/architecture_diagram.png)
 
 ### Three-Stage Pipeline
 
