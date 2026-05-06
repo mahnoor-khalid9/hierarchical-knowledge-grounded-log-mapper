@@ -182,15 +182,13 @@ class MITRELogAnalyzerBatched:
         normalized = log_entry.lower().strip()
         return hashlib.md5(normalized.encode()).hexdigest()
     
+    
     def _create_tactic_prompt(self, log_entry: str) -> str:
-        """Create prompt for tactic identification - UNCHANGED"""
-        
-        # Extract tactic summaries
         tactic_summaries = []
-        for tactic_key, tactic_data in self.mitre_kb.get('tactics', {}).items():
+        for tactic_key, tactic_data in self.mitre_kb.get("tactics", {}).items():
             tactic_summaries.append(
-                f"- {tactic_data['name']} ({tactic_data['shortname']}): "
-                f"{tactic_data['description']}..."
+                f"- Name: ({tactic_data['shortname']}) "
+                f"Description: {tactic_data['description']}."
             )
         
         prompt = f"""
@@ -215,69 +213,71 @@ class MITRELogAnalyzerBatched:
             {chr(10).join(tactic_summaries)}
 
             ### ANALYSIS GUIDELINES:
-            - **Do not rely on field labels:** A field named 'cmd' might just be a process name; a field named 'path' might be a registry key. Focus on the *content* of the values.
-            - **Context Matters:** Remote access tools (VNC, RDP, SSH) performing routine reads are likely in a 'Discovery' or 'Lateral Movement' phase, not 'Execution', unless a new process is being spawned.
-            - **Match the Goal:** Choose the Tactic whose definition most closely matches the *primary goal* of the action identified in Step 2.
+            - **Do not rely on field labels:** Focus on the *content* of the values.
+            - **Context Matters:** Remote access tools performing routine reads are likely in a 'Discovery' phase.
+            - **Match the Goal:** Choose the Tactic whose definition most closely matches the *primary goal* of the action.
 
             ### OUTPUT FORMAT (JSON):
             {{
                 "tactic_name": "Exact name from provided list",
-                "tactic_shortname": "shortname",
                 "confidence": 0.0-1.0,
-                "reasoning": "Explain in less than 50 words. how the inferred action matches the specific MITRE description."
+                "reasoning": "Explain in less than 50 words how the inferred action matches the specific MITRE description."
             }}
-            
+
             JSON Response:
         """
-
         return prompt
     
+
     def _create_technique_prompt(
-        self, 
-        log_entry: str, 
-        tactic_name: str,
-        tactic_shortname: str
+        self, log_entry: str, tactic_shortname: str
     ) -> str:
-        """Create prompt for technique identification - UNCHANGED"""
-        
-        # Get techniques for this tactic
-        tactic_data = self.mitre_kb.get('tactics', {}).get(tactic_shortname, {})
-        techniques = tactic_data.get('techniques', [])
-        
-        # Create technique summaries (ID + Name only, no descriptions to save tokens)
+        tactic_shortname = tactic_shortname.lower()
+        tactic_data = self.mitre_kb.get("tactics", {}).get(tactic_shortname, {})
+        techniques = tactic_data.get("techniques", [])
+
         technique_summaries = []
         for tech in techniques:
-            tech_summary = f"- {tech['attack_id']}: {tech['name']}"
+            tech_summary = f"- (technique_id: {tech['attack_id']}, Name: {tech['name']})"
             technique_summaries.append(tech_summary)
 
+        if not technique_summaries:
+            print("No techniques available for this tactic.", flush=True)
+        
         prompt = f"""
-            You are a Senior Security Operations Center (SOC) Analyst and MITRE ATT&CK Specialist. You are performing a deep-dive analysis to map a log entry to a specific MITRE ATT&CK Technique.
+            You are a Senior Security Operations Center (SOC) Analyst and MITRE ATT&CK Specialist.
 
+            ### CONTEXT
+            You have already identified the MITRE ATT&CK Tactic for this log: **{tactic_shortname}**
 
-            ### PREVIOUS CLASSIFICATION:
-            - **Identified Tactic:** {tactic_name}
-            - **Scope:** Your analysis MUST stay within the provided {tactic_name} techniques. Do not suggest techniques from other tactics.
+            Now, **select the most specific Technique** from the list below that best explains *how* the attacker achieved this goal.
 
             ### LOG ENTRY:
             {log_entry}
 
-            ### CANDIDATE TECHNIQUES (Under {tactic_name}):
+            ### AVAILABLE TECHNIQUES FOR "{tactic_shortname}" TACTIC:
             {chr(10).join(technique_summaries)}
 
-            ### STEP-BY-STEP MAPPING LOGIC:
-            1. **Identify the Target Object:** What specific system resource is being touched? 
-            - Is it a **Registry Key**? (Look for techniques involving 'Query Registry' or 'Modify Registry').
-            - Is it a **File or Directory**? (Look for techniques involving 'File Discovery' or 'Data Destruction').
-            - Is it a **Process or Service**? (Look for 'Process Discovery' or 'Service Execution').
-            2. **Determine the Mechanism:** How is the action being performed? (e.g., via a remote tool, a native API call, or a command shell).
-            3. **Semantic Match:** Compare the 'Target Object' and 'Mechanism' found in the log against the 'AVAILABLE TECHNIQUES' list. 
+            ### SELECTION CRITERIA:
+            1. **Match Technical Indicators:**
+               - Does the log show a registry modification? → Likely T1547 (Boot/Logon Autostart)
+               - Does it show scheduled task creation? → Likely T1053 (Scheduled Task/Job)
+               - Does it access sensitive files (SAM, credentials)? → Likely T1003 (Credential Dumping)
+
+            2. **Be Specific:**
+               - If the log shows "reading SAM database", choose T1003 (OS Credential Dumping) over generic Discovery techniques.
+
+            3. **Confidence = Specificity:**
+               - If the log precisely matches a technique's definition → 0.8–1.0 confidence
+               - If it's likely but ambiguous → 0.5–0.7
+               - If it's the best guess among poor fits → 0.3–0.5
 
             ### OUTPUT FORMAT (JSON):
             {{
-                "technique_id": "T####",
+                "technique_id": "Exact technique_id from the list",
                 "technique_name": "Exact name from the list",
                 "confidence": 0.0-1.0,
-                "reasoning": "Explain why this specific technique is the best fit within the {tactic_name} tactic."
+                "reasoning": "In less than 50 words, explain which specific indicators in the log match this technique."
             }}
 
             JSON Response:
@@ -286,75 +286,61 @@ class MITRELogAnalyzerBatched:
     
 
     def _extract_json_from_response(self, response: str, verbose: bool = False) -> Optional[Dict]:
-        """Extract JSON from LLM response with multiple fallback strategies"""
-        if verbose:
-            print(f"  Parsing response: {response[:300]}...")
-        
+        """
+        Extract JSON from LLM response using multiple strategies.
+        Returns parsed JSON dict or None if extraction fails.
+        """
         try:
-            # Strategy 1: Find JSON block with proper braces
-            json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                try:
-                    result = json.loads(json_str)
-                    if verbose:
-                        print(f"  ✓ Parsed JSON: {result}")
-                    return result
-                except json.JSONDecodeError:
-                    pass
-            
-            # Strategy 2: Look for JSON after "JSON Response:" marker
-            if "JSON Response:" in response:
-                json_part = response.split("JSON Response:")[-1].strip()
-                json_match = re.search(r'\{[^{}]*\}', json_part, re.DOTALL)
-                if json_match:
+            # Strategy 1: Try direct JSON parse
+            try:
+                return json.loads(response)
+            except json.JSONDecodeError:
+                pass
+
+            # Strategy 2: Extract JSON block from markdown
+            json_pattern = r"```(?:json)?\s*(\{.*?\})\s*```"
+            matches = re.findall(json_pattern, response, re.DOTALL)
+            if matches:
+                for match in matches:
                     try:
-                        result = json.loads(json_match.group(0))
-                        if verbose:
-                            print(f"  ✓ Parsed JSON after marker: {result}")
-                        return result
+                        return json.loads(match)
                     except json.JSONDecodeError:
-                        pass
-            
-            # Strategy 3: Extract fields individually and build JSON
-            # For tactic
-            tactic_name = re.search(r'"tactic_name"\s*:\s*"([^"]+)"', response)
-            tactic_short = re.search(r'"tactic_shortname"\s*:\s*"([^"]+)"', response)
-            confidence = re.search(r'"confidence"\s*:\s*([0-9.]+)', response)
-            
-            if tactic_name and tactic_short:
-                result = {
-                    'tactic_name': tactic_name.group(1),
-                    'tactic_shortname': tactic_short.group(1),
-                    'confidence': float(confidence.group(1)) if confidence else 0.7,
-                    'reasoning': 'Extracted from response'
-                }
-                if verbose:
-                    print(f"  ✓ Built tactic JSON: {result}")
-                return result
-            
-            # For technique
-            tech_id = re.search(r'"technique_id"\s*:\s*"(T\d+(?:\.\d+)?)"', response)
-            tech_name = re.search(r'"technique_name"\s*:\s*"([^"]+)"', response)
-            
-            if tech_id and tech_name:
-                result = {
-                    'technique_id': tech_id.group(1),
-                    'technique_name': tech_name.group(1),
-                    'confidence': float(confidence.group(1)) if confidence else 0.7,
-                    'reasoning': 'Extracted from response'
-                }
-                if verbose:
-                    print(f"  ✓ Built technique JSON: {result}")
-                return result
-            
+                        continue
+
+            # Strategy 3: Find JSON object with regex
+            json_obj_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_obj_pattern, response, re.DOTALL)
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except json.JSONDecodeError:
+                        continue
+
+            # Strategy 4: Try cleaning common issues
+            cleaned = response.strip()
+            if not cleaned.startswith('{'):
+                first_brace = cleaned.find('{')
+                if first_brace != -1:
+                    cleaned = cleaned[first_brace:]
+            if not cleaned.endswith('}'):
+                last_brace = cleaned.rfind('}')
+                if last_brace != -1:
+                    cleaned = cleaned[:last_brace + 1]
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                pass
+
             if verbose:
-                print(f"  ✗ All JSON extraction strategies failed")
+                print(f"  ✗ All JSON extraction strategies failed", flush=True)
             return None
-            
+
         except Exception as e:
             if verbose:
-                print(f"  ✗ JSON extraction error: {e}")
+                print(f"  ✗ JSON extraction error: {e}", flush=True)
             return None
     
     def _batch_generate(self, prompts: List[str]) -> List[str]:
@@ -590,7 +576,6 @@ class MITRELogAnalyzerBatched:
                 prompt = self._create_technique_prompt(
                     log,
                     tactic_result.get('tactic_name', ''),
-                    tactic_result.get('tactic_shortname', '')
                 )
                 technique_prompts.append(prompt)
                 valid_indices.append(i)
@@ -635,7 +620,7 @@ class MITRELogAnalyzerBatched:
             if tactic_result and technique_result:
                 # Extract mitigation strategies
                 mitigation_strategies, detection_strategies = self._get_strategies(
-                    tactic_result.get('tactic_shortname', ''),
+                    tactic_result.get('tactic_name', ''),
                     technique_result.get('technique_id', '')
                 )
                 
@@ -676,14 +661,8 @@ class MITRELogAnalyzerBatched:
         """Create result dictionary from prediction"""
         return {
             'log_index': idx,
-            # 'event_type': row.get('event_type', ''),
-            # 'timestamp': row.get('ts_human', ''),
-            # 'pid': row.get('pid', ''),
-            # 'cmdline': row.get('cmdline', ''),
-            # 'file_path': row.get('file_path', ''),
-            # 'registry_key': row.get('registry_key', ''),
             'raw_text': row['raw_text'],
-            'tactic': prediction.tactic,
+            'tactic': prediction.tactic.title(),
             'technique_id': prediction.technique_id,
             'technique_name': prediction.technique_name,
             'confidence_score': prediction.confidence_score,
