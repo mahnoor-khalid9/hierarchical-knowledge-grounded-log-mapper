@@ -4,9 +4,9 @@
 
 HKLM uses a hierarchical, knowledge-constrained approach — the LLM reasons over bounded options from the ATT&CK knowledge base instead of recalling from training data, reducing hallucination and improving classification quality.
 
-> **CIS 544-01: Cyber Defense and Operations** — Spring 2026
-> Minal Ali • Fnu Mahnoor
-> University of Massachusetts Dartmouth
+> **CIS 544: Cyber Defense and Operations** — Spring 2026  
+> Minal Ali • Fnu Mahnoor  
+> University of Massachusetts Dartmouth  
 
 ---
 

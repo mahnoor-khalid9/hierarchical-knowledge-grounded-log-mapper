@@ -343,10 +343,25 @@ class GradioMITREAnalyzer:
 # ─────────────────────────────────────────────────
 # SAMPLE LOGS for the text input placeholder
 # ─────────────────────────────────────────────────
-SAMPLE_LOGS = """type=EVENT_CONNECT | pid=8428 | cmd=ssh admin@128.55.12.56
-type=EVENT_READ | pid=3488 | cmd=scp -r C:\\Users\\admin\\Documents admin@128.55.12.106:./files/ | path=\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SideBySide\\
-type=EVENT_MODIFY_FILE_ATTRIBUTES | pid=3920 | cmd=\\??\\C:\\WINDOWS\\system32\\conhost.exe 0xffffffff -ForceV1 | path=\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Ole\\
-type=EVENT_READ | pid=7980 | cmd="C:\\Program Files\\OpenSSH-Win64\\sshd.exe" | path=\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Services\\Tcpip\\Parameters\\Winsock\\""".strip()
+
+
+# ── Sample logs ──
+SAMPLE_LOGS = r"""type=EVENT_CONNECT | pid=8428 | cmd=ssh admin@128.55.12.56
+type=EVENT_READ | pid=3488 | cmd=scp -r C:\Users\admin\Documents admin@128.55.12.106:./files/ | path=\REGISTRY\MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\SideBySide\
+type=EVENT_READ | pid=7980 | cmd="C:\Program Files\OpenSSH-Win64\sshd.exe" | path=\REGISTRY\MACHINE\SYSTEM\ControlSet001\Services\Tcpip\Parameters\Winsock\
+type=EVENT_CONNECT | pid=9448 | cmd="C:\Program Files\OpenSSH-Win64\ssh.exe" "-x" "-oForwardAgent=no" "-oPermitLocalCommand=no" "-oClearAllForwardings=yes" 
+type=EVENT_READ | pid=4364 | cmd="C:\Program Files\TightVNC\tvnserver.exe" -desktopserver -logdir "C:\WINDOWS\system32\config\systemprofile\AppData\Roami | path=\REGISTRY\MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\SideBySide\
+type=EVENT_SENDTO | bytes=68
+type=EVENT_MODIFY_FILE_ATTRIBUTES | pid=7104 | cmd="C:\Program Files\OpenSSH-Win64\ssh.exe" "-x" "-oForwardAgent=no" "-oPermitLocalCommand=no" "-oClearAllForwardings=yes"  | path=\REGISTRY\MACHINE\SYSTEM\ControlSet001\Services\WinSock2\Parameters\NameSpace_Catalog5\
+type=EVENT_READ | path=\REGISTRY\MACHINE\SYSTEM\ControlSet001\Services\WinSock2\Parameters\NameSpace_Catalog5\Catalog_Entries64\000000000001\
+type=EVENT_READ | path=\REGISTRY\MACHINE\SAM\SAM\Domains\Account\Users\Names\admin\
+type=EVENT_MODIFY_FILE_ATTRIBUTES | pid=3784 | cmd=scp  -r C:\Users\admin\Documents admin@128.55.12.51:./test/ | path=\REGISTRY\MACHINE\SYSTEM\ControlSet001\Services\WinSock2\Parameters\Protocol_Catalog9\
+type=EVENT_READ | pid=3784 | cmd=scp  -r C:\Users\admin\Documents admin@128.55.12.51:./test/ | path=\REGISTRY\MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones\Eastern Standard Time\Dynamic DST\
+type=EVENT_READ | pid=3784 | cmd=scp  -r C:\Users\admin\Documents admin@128.55.12.51:./test/ | path=\REGISTRY\MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\GRE_Initialize\
+type=EVENT_READ | pid=8668 | cmd=C:\WINDOWS\system32\cmd.exe | path=\REGISTRY\USER\S-1-5-21-231540947-922634896-4161786520-1004\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders\
+type=EVENT_READ | pid=8736 | cmd=C:\WINDOWS\system32\cmd.exe | path=\REGISTRY\USER\S-1-5-21-231540947-922634896-4161786520-1004\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders\
+type=EVENT_READ | pid=8460 | cmd=C:\WINDOWS\system32\cmd.exe | path=\REGISTRY\USER\S-1-5-21-231540947-922634896-4161786520-1004\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders\
+""".strip()
 
 
 def create_interface():
@@ -370,19 +385,16 @@ def create_interface():
 
                 gr.Markdown("### 📂 Log Input")
                 with gr.Tabs() as input_tabs:
-                    with gr.Tab("📝 Paste Logs", id="text_tab"):
+                    with gr.Tab("📝 Paste Logs"):
                         text_input = gr.Textbox(
                             label="Paste log events (one per line)",
                             lines=8,
                             max_lines=20,
-                            placeholder="Paste raw log events here — one event per line.\n\n"
-                                        "Example:\n"
-                                        "type=EVENT_CONNECT | pid=8428 | cmd=ssh admin@128.55.12.56\n"
-                                        "type=EVENT_READ | pid=3488 | cmd=scp -r ...\n\n"
-                                        "Works with any log format — Windows events, syslog, firewall logs, etc.",
+                            value=SAMPLE_LOGS,
                         )
                         load_sample_btn = gr.Button("📋 Load Sample Logs", size="sm")
-
+                        
+                   
                     with gr.Tab("📁 Upload CSV", id="file_tab"):
                         file_input = gr.File(label="Upload CSV with 'raw_text' column", file_types=[".csv", ".tsv"])
 
@@ -410,11 +422,20 @@ def create_interface():
                 verbose = gr.Checkbox(value=True, label="Verbose Logging",
                                      info="Show per-event model outputs")
 
-                analyze_btn = gr.Button("🚀 Run Analysis", variant="primary", size="lg")
-
             # ── RIGHT: Outputs ──
             with gr.Column(scale=2):
-                gr.Markdown("### 📊 Results")
+                # Results header with RUN button
+                with gr.Row(variant="panel"):
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 📊 Results")
+                    with gr.Column(scale=0, min_width=120):
+                        analyze_btn = gr.Button(
+                            "🚀 RUN",
+                            variant="primary",
+                            size="lg"
+                        )
+
+                # gr.Markdown("### 📊 Results")
                 status_box = gr.Textbox(label="Status", value="Ready — paste logs or upload a CSV to begin",
                                         max_lines=1)
 
@@ -474,7 +495,7 @@ if __name__ == "__main__":
     interface = create_interface()
     interface.launch(
         server_name="0.0.0.0",   # accessible from network (needed for Colab/HF)
-        server_port=7860,
+        server_port=8000,
         share=False,             # set True for public URL in Colab
         show_error=True,
         inbrowser=True,

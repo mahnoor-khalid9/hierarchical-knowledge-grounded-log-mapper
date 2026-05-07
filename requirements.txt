@@ -1,5 +1,4 @@
 # MITRE ATT&CK Analyzer - Requirements
-# gradio_app.py + mitre_analyzer_batched.py
 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 gradio 
 pandas 
